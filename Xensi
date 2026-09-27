@@ -1,0 +1,565 @@
+-- =====================================================================
+-- OROHUB // MOBILE PVE EXTENDED
+-- NPC ESP + HP + DISTANCE + FOV + TARGET SELECTION
+-- Event-driven / Mobile optimized
+-- =====================================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- =========================================================
+-- CLEANUP OLD GUI
+-- =========================================================
+
+local oldGui = PlayerGui:FindFirstChild("OroHubPvEExtended")
+if oldGui then
+    oldGui:Destroy()
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "OroHubPvEExtended"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = PlayerGui
+
+-- =========================================================
+-- CONFIG
+-- =========================================================
+
+local CONFIG = {
+    ESP_UPDATE = 0.10,
+    MAX_DISTANCE = 500,
+    FOV_RADIUS = 180,
+    SHOW_DISTANCE = true,
+    SHOW_HEALTH = true,
+    SHOW_FOV = true,
+}
+
+-- =========================================================
+-- MAIN BUTTON
+-- =========================================================
+
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Size = UDim2.fromOffset(55, 45)
+ToggleBtn.Position = UDim2.new(0, 20, 0.3, 0)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+ToggleBtn.TextColor3 = Color3.fromRGB(0, 255, 120)
+ToggleBtn.TextSize = 14
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.Text = "PVE"
+ToggleBtn.Parent = ScreenGui
+
+local ToggleCorner = Instance.new("UICorner")
+ToggleCorner.CornerRadius = UDim.new(1, 0)
+ToggleCorner.Parent = ToggleBtn
+
+local ToggleStroke = Instance.new("UIStroke")
+ToggleStroke.Color = Color3.fromRGB(0, 255, 120)
+ToggleStroke.Thickness = 2
+ToggleStroke.Parent = ToggleBtn
+
+-- =========================================================
+-- MAIN FRAME
+-- =========================================================
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.fromOffset(320, 360)
+MainFrame.Position = UDim2.new(0.5, -160, 0.5, -180)
+MainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+MainFrame.Parent = ScreenGui
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 12)
+MainCorner.Parent = MainFrame
+
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Color = Color3.fromRGB(0, 255, 120)
+MainStroke.Thickness = 1.5
+MainStroke.Parent = MainFrame
+
+ToggleBtn.Activated:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+end)
+
+-- =========================================================
+-- TITLE
+-- =========================================================
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 40)
+Title.BackgroundTransparency = 1
+Title.TextColor3 = Color3.fromRGB(0, 255, 120)
+Title.TextSize = 14
+Title.Font = Enum.Font.GothamBold
+Title.Text = "⚡ OROHUB // PVE EXTENDED ⚡"
+Title.Parent = MainFrame
+
+-- =========================================================
+-- TOGGLE CREATOR
+-- =========================================================
+
+local function createToggle(name, y, callback)
+    local button = Instance.new("TextButton")
+
+    button.Size = UDim2.new(1, -20, 0, 38)
+    button.Position = UDim2.fromOffset(10, y)
+    button.BackgroundColor3 = Color3.fromRGB(28, 28, 42)
+    button.TextColor3 = Color3.fromRGB(200, 200, 220)
+    button.TextSize = 12
+    button.Font = Enum.Font.GothamSemibold
+    button.Text = name .. ": [OFF]"
+    button.Parent = MainFrame
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = button
+
+    local enabled = false
+
+    button.Activated:Connect(function()
+        enabled = not enabled
+
+        if enabled then
+            button.BackgroundColor3 = Color3.fromRGB(0, 180, 90)
+            button.TextColor3 = Color3.fromRGB(255, 255, 255)
+            button.Text = name .. ": [ON]"
+        else
+            button.BackgroundColor3 = Color3.fromRGB(28, 28, 42)
+            button.TextColor3 = Color3.fromRGB(200, 200, 220)
+            button.Text = name .. ": [OFF]"
+        end
+
+        callback(enabled)
+    end)
+
+    return button
+end
+
+-- =========================================================
+-- NPC CACHE
+-- =========================================================
+
+local activeNPCs = {}
+local npcConnections = {}
+
+local function isPlayerCharacter(model)
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character == model then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function removeNPC(model)
+    activeNPCs[model] = nil
+
+    local connections = npcConnections[model]
+
+    if connections then
+        for _, connection in ipairs(connections) do
+            if connection.Connected then
+                connection:Disconnect()
+            end
+        end
+
+        npcConnections[model] = nil
+    end
+end
+
+local function registerNPC(model)
+    if not model or not model:IsA("Model") then
+        return
+    end
+
+    if activeNPCs[model] then
+        return
+    end
+
+    if isPlayerCharacter(model) then
+        return
+    end
+
+    local humanoid = model:FindFirstChildOfClass("Humanoid")
+    local head = model:FindFirstChild("Head")
+
+    if not humanoid or not head then
+        return
+    end
+
+    if humanoid.Health <= 0 then
+        return
+    end
+
+    activeNPCs[model] = true
+    npcConnections[model] = {}
+
+    table.insert(
+        npcConnections[model],
+        humanoid.Died:Connect(function()
+            removeNPC(model)
+        end)
+    )
+
+    table.insert(
+        npcConnections[model],
+        model.AncestryChanged:Connect(function(_, parent)
+            if parent == nil then
+                removeNPC(model)
+            end
+        end)
+    )
+end
+
+-- Initial scan
+for _, obj in ipairs(workspace:GetDescendants()) do
+    if obj:IsA("Model") then
+        registerNPC(obj)
+    end
+end
+
+-- New NPC / delayed components
+workspace.DescendantAdded:Connect(function(obj)
+
+    if obj:IsA("Model") then
+        task.defer(function()
+            registerNPC(obj)
+        end)
+    end
+
+    local parent = obj.Parent
+
+    if parent and parent:IsA("Model") then
+        task.defer(function()
+            registerNPC(parent)
+        end)
+    end
+end)
+
+workspace.DescendantRemoving:Connect(function(obj)
+    if activeNPCs[obj] then
+        removeNPC(obj)
+    end
+end)
+
+-- =========================================================
+-- ESP
+-- =========================================================
+
+local espFolder = Instance.new("Folder")
+espFolder.Name = "NPC_ESP"
+espFolder.Parent = ScreenGui
+
+local espLabels = {}
+local espEnabled = false
+
+local function createESPLabel(index)
+    if espLabels[index] then
+        return espLabels[index]
+    end
+
+    local label = Instance.new("TextLabel")
+
+    label.Size = UDim2.fromOffset(180, 42)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.fromRGB(255, 200, 50)
+    label.TextSize = 11
+    label.Font = Enum.Font.GothamBold
+    label.TextStrokeTransparency = 0.2
+    label.TextWrapped = true
+    label.Visible = false
+    label.Parent = espFolder
+
+    espLabels[index] = label
+
+    return label
+end
+
+local function hideAllESP()
+    for _, label in ipairs(espLabels) do
+        label.Visible = false
+    end
+end
+
+createToggle("👁️ NPC ESP", 50, function(state)
+    espEnabled = state
+
+    if not state then
+        hideAllESP()
+    end
+end)
+
+local espTimer = 0
+
+RunService.RenderStepped:Connect(function(dt)
+
+    if not espEnabled then
+        return
+    end
+
+    espTimer += dt
+
+    if espTimer < CONFIG.ESP_UPDATE then
+        return
+    end
+
+    espTimer = 0
+
+    local camera = workspace.CurrentCamera
+    if not camera then
+        return
+    end
+
+    local character = LocalPlayer.Character
+    local localRoot = character and character:FindFirstChild("HumanoidRootPart")
+
+    if not localRoot then
+        hideAllESP()
+        return
+    end
+
+    local index = 0
+
+    for npc in pairs(activeNPCs) do
+
+        if not npc.Parent then
+            removeNPC(npc)
+            continue
+        end
+
+        local humanoid = npc:FindFirstChildOfClass("Humanoid")
+        local head = npc:FindFirstChild("Head")
+        local root =
+            npc:FindFirstChild("HumanoidRootPart")
+            or npc.PrimaryPart
+
+        if not humanoid or humanoid.Health <= 0 or not head or not root then
+            removeNPC(npc)
+            continue
+        end
+
+        local distance =
+            (localRoot.Position - root.Position).Magnitude
+
+        if distance <= CONFIG.MAX_DISTANCE then
+
+            local position, visible =
+                camera:WorldToViewportPoint(
+                    head.Position + Vector3.new(0, 1, 0)
+                )
+
+            if visible and position.Z > 0 then
+
+                index += 1
+
+                local label = createESPLabel(index)
+
+                local text = npc.Name
+
+                if CONFIG.SHOW_HEALTH then
+                    text = text .. string.format(
+                        "\nHP: %d/%d",
+                        math.floor(humanoid.Health),
+                        math.floor(humanoid.MaxHealth)
+                    )
+                end
+
+                if CONFIG.SHOW_DISTANCE then
+                    text = text .. string.format(
+                        "  |  %dm",
+                        math.floor(distance)
+                    )
+                end
+
+                label.Text = text
+
+                label.Position = UDim2.fromOffset(
+                    position.X - 90,
+                    position.Y
+                )
+
+                label.Visible = true
+            end
+        end
+    end
+
+    for i = index + 1, #espLabels do
+        espLabels[i].Visible = false
+    end
+end)
+
+-- =========================================================
+-- FOV CIRCLE
+-- =========================================================
+
+local fovEnabled = false
+
+local FOV = Instance.new("Frame")
+FOV.Name = "FOV"
+FOV.Size = UDim2.fromOffset(
+    CONFIG.FOV_RADIUS * 2,
+    CONFIG.FOV_RADIUS * 2
+)
+FOV.AnchorPoint = Vector2.new(0.5, 0.5)
+FOV.BackgroundTransparency = 1
+FOV.Visible = false
+FOV.Parent = ScreenGui
+
+local FOVCorner = Instance.new("UICorner")
+FOVCorner.CornerRadius = UDim.new(1, 0)
+FOVCorner.Parent = FOV
+
+local FOVStroke = Instance.new("UIStroke")
+FOVStroke.Color = Color3.fromRGB(0, 255, 120)
+FOVStroke.Thickness = 2
+FOVStroke.Transparency = 0.25
+FOVStroke.Parent = FOV
+
+createToggle("⭕ FOV", 100, function(state)
+    fovEnabled = state
+    FOV.Visible = state
+end)
+
+RunService.RenderStepped:Connect(function()
+
+    if not fovEnabled then
+        return
+    end
+
+    local camera = workspace.CurrentCamera
+    if not camera then
+        return
+    end
+
+    local viewport = camera.ViewportSize
+
+    FOV.Position = UDim2.fromOffset(
+        viewport.X / 2,
+        viewport.Y / 2
+    )
+end)
+
+-- =========================================================
+-- TARGET SELECTION
+-- =========================================================
+
+local targetEnabled = false
+local currentTarget = nil
+
+createToggle("🎯 NPC Target Selection", 150, function(state)
+    targetEnabled = state
+
+    if not state then
+        currentTarget = nil
+    end
+end)
+
+local TargetLabel = Instance.new("TextLabel")
+TargetLabel.Size = UDim2.new(1, -20, 0, 30)
+TargetLabel.Position = UDim2.fromOffset(10, 195)
+TargetLabel.BackgroundTransparency = 1
+TargetLabel.TextColor3 = Color3.fromRGB(0, 255, 120)
+TargetLabel.TextSize = 12
+TargetLabel.Font = Enum.Font.GothamBold
+TargetLabel.Text = "TARGET: NONE"
+TargetLabel.Parent = MainFrame
+
+local targetTimer = 0
+
+RunService.RenderStepped:Connect(function(dt)
+
+    if not targetEnabled then
+        TargetLabel.Text = "TARGET: NONE"
+        currentTarget = nil
+        return
+    end
+
+    targetTimer += dt
+
+    if targetTimer < 0.08 then
+        return
+    end
+
+    targetTimer = 0
+
+    local camera = workspace.CurrentCamera
+    if not camera then
+        return
+    end
+
+    local viewport = camera.ViewportSize
+
+    local center = Vector2.new(
+        viewport.X / 2,
+        viewport.Y / 2
+    )
+
+    local closest = nil
+    local closestDistance = CONFIG.FOV_RADIUS
+
+    for npc in pairs(activeNPCs) do
+
+        local humanoid = npc:FindFirstChildOfClass("Humanoid")
+        local head = npc:FindFirstChild("Head")
+
+        if humanoid and humanoid.Health > 0 and head then
+
+            local position, visible =
+                camera:WorldToViewportPoint(head.Position)
+
+            if visible and position.Z > 0 then
+
+                local distance =
+                    (Vector2.new(position.X, position.Y) - center).Magnitude
+
+                if distance <= closestDistance then
+                    closestDistance = distance
+                    closest = npc
+                end
+            end
+        end
+    end
+
+    currentTarget = closest
+
+    if currentTarget then
+        TargetLabel.Text =
+            "TARGET: " .. currentTarget.Name
+    else
+        TargetLabel.Text = "TARGET: NONE"
+    end
+end)
+
+-- =========================================================
+-- CLOSE
+-- =========================================================
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(1, -20, 0, 35)
+CloseBtn.Position = UDim2.new(0, 10, 1, -45)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.TextSize = 12
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.Text = "ĐÓNG MENU"
+CloseBtn.Parent = MainFrame
+
+local CloseCorner = Instance.new("UICorner")
+CloseCorner.CornerRadius = UDim.new(0, 8)
+CloseCorner.Parent = CloseBtn
+
+CloseBtn.Activated:Connect(function()
+
+    for npc in pairs(activeNPCs) do
+        removeNPC(npc)
+    end
+
+    for _, label in ipairs(espLabels) do
+        label:Destroy()
+    end
+
+    ScreenGui:Destroy()
+end)
